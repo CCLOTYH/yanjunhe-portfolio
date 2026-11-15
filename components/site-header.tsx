@@ -7,14 +7,14 @@ export function SiteHeader() {
         aria-hidden
         className="h-1 w-full bg-gradient-to-r from-racing-orange via-racing-red to-navy"
       />
-      <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-6">
+      <div className="mx-auto flex min-h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 py-2 sm:px-6">
         <Link
           href="/"
           className="text-sm font-bold uppercase tracking-widest text-charcoal transition-colors hover:text-racing-red"
         >
           Yanjun He
         </Link>
-        <nav className="flex items-center gap-6 text-sm text-zinc-600">
+        <nav className="flex flex-wrap items-center justify-end gap-x-3.5 gap-y-1 text-xs text-zinc-600 sm:gap-x-6 sm:text-sm">
           <Link
             href="/about-me"
             className="transition-colors hover:text-racing-red"
@@ -28,10 +28,22 @@ export function SiteHeader() {
             Projects
           </Link>
           <Link
+            href="/blogs"
+            className="transition-colors hover:text-racing-red"
+          >
+            Blogs
+          </Link>
+          <Link
             href="/contact-me-server-form"
             className="transition-colors hover:text-racing-red"
           >
             Contact
+          </Link>
+          <Link
+            href="/contact-me"
+            className="transition-colors hover:text-racing-red"
+          >
+            Contact (API)
           </Link>
         </nav>
       </div>

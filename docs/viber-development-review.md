@@ -1,10 +1,12 @@
 # Viber Development Review
 
-This document records three authentic development-review episodes from the Viber
-Coding Agent session used to build this portfolio for ISBA2438 Assignment 2,
-Part 1. All prompts, decisions, code changes, and test results below are taken
-from the real session. Where the exact prompt wording was not retained, the
-instruction is summarized and marked as such rather than invented.
+This document records six authentic development-review episodes from the Viber
+Coding Agent session used to build this portfolio for ISBA2438 Assignment 2.
+Examples 1–3 cover Part 1; Examples 4–6 cover Part 2 (contact API routes, blog
+API, admin page, and public blog pages). All prompts, decisions, code changes,
+and test results below are taken from the real session. Where the exact prompt
+wording was not retained, the instruction is summarized and marked as such
+rather than invented.
 
 > Note on Git history: all development happened inside the Viber session and was
 > committed to Git once, at Part 1 completion. No incremental development
@@ -146,3 +148,121 @@ instruction is summarized and marked as such rather than invented.
 - `lib/contact-store.ts` (hardened storage)
 - `tests/contact-store.test.mjs` (new test suite)
 - `package.json` (`test` script), `README.md` (testing docs)
+
+---
+
+# Part 2 examples
+
+## Example 4 — Unknown blog slugs returned HTTP 200 in production (Cache Components streaming)
+
+### Chronology
+
+1. **What Viber implemented.** For the public blog feature, `/blogs/[slug]`
+   rendered a post by reading the JSON store at request time and calling
+   `notFound()` for unknown slugs. The project scaffold enabled
+   `cacheComponents` in `next.config.ts`, which forbids `export const dynamic
+   = "force-dynamic"`; Viber first satisfied its validation with a `<Suspense>`
+   boundary and `connection()`, then simplified to a blocking route via
+   `export const instant = false`. In the dev server, unknown slugs returned
+   HTTP 404, so the behavior looked correct.
+2. **What the user observed.** Before publishing Part 2, the user asked for a
+   full production-build check and specifically to "verify why it's needed and
+   confirm that the invalid URL really returns HTTP 404 in production."
+3. **Investigation.** Against `next build` + `next start`, the invalid slug
+   `/blogs/unknown-slug` returned **HTTP 200** — the correct not-found UI was
+   rendered, but the status code was wrong. The bundled Next.js documentation
+   (`streaming.md`) explains why: with Cache Components, the prerendered shell
+   is sent immediately, so the response *"starts a 200 … even when … the route
+   sets `instant = false`"*; a later `notFound()` renders the not-found UI and
+   adds `noindex`, but the status line has already been written. The Part 1
+   route `/projects/unknown-project` had the same production regression.
+4. **What was accepted/rejected and why.** The 200-with-404-UI behavior was
+   rejected: the assignment explicitly requires unknown slugs to return a
+   proper 404 response, and a graded checker (or any HTTP client) sees the
+   status code, not the streamed UI. Keeping Cache Components was therefore
+   not an option for these routes, and no caching feature of the site depended
+   on it (the blog list and forms fetch data client-side or through route
+   handlers).
+5. **Corrective action.** `cacheComponents` (and `partialPrefetching`, which
+   errors without it) were removed from `next.config.ts`; `/blogs/[slug]` was
+   changed to `export const dynamic = "force-dynamic"`, which under the
+   standard model renders per request — both fixing the 404 status and
+   guaranteeing newly published posts appear without a rebuild. One
+   intermediate re-test initially still reported 200 because a stale server
+   process still held port 3000 (an `EADDRINUSE` in the start log); after
+   killing it and restarting from the fresh build, results were re-measured
+   cleanly.
+6. **How it was checked.** Fresh production build + `next start`: the full
+   route sweep returned 200 for all valid pages, **404** for
+   `/blogs/unknown-slug` and `/projects/unknown-project`, and 307 for the
+   `/blog-posts` redirect; both real slugs served their distinct content.
+   Headless-browser checks confirmed the list page, click-through, and the
+   not-found UI on the invalid slug.
+7. **Observed outcome.** Unknown slugs return a true HTTP 404 in production
+   on both dynamic routes; `npm test` 28/28, lint clean, production build
+   passes (16/16 pages).
+
+### Related source files
+- `next.config.ts` (`cacheComponents` removed)
+- `app/blogs/[slug]/page.tsx` (`dynamic = "force-dynamic"`, `notFound()`)
+
+---
+
+## Example 5 — Node's test runner could not resolve `@/` imports and extensionless TS imports
+
+### Chronology
+
+1. **Initial implementation.** The contact/blog API test suites and the shared
+   API handler modules were written with the codebase's usual import style:
+   the `@/*` path alias and extensionless relative imports.
+2. **Failure.** Running the suites through `node --test` failed at module
+   resolution: Node does not read `tsconfig.json`, so it can neither expand the
+   `@/` alias nor infer a `.ts` extension for an extensionless import. The
+   tests could not load `lib/contact-api.ts` / `lib/blog-api.ts` at all.
+3. **Resolution.** Modules imported by tests and scripts
+   (`lib/contact-api.ts`, `lib/blog-api.ts`) were switched to explicit
+   relative imports with `.ts` extensions; the test files import the
+   `lib/` modules directly (e.g. `../lib/contact-store.ts`); and
+   `"allowImportingTsExtensions": true` was added to `tsconfig.json` so
+   TypeScript and ESLint accept the explicit extensions. Alias imports remain
+   in app components, which are compiled by Next.js/Turbopack rather than run
+   by Node directly.
+4. **How it was checked.** `npm test` passes **28/28** (11 contact-store, 6
+   contact-api, 11 blog-api); `npm run lint` clean; `npm run build` passes —
+   confirming the change satisfies both the Node runner and the TypeScript
+   toolchain. The same pattern was reused for `scripts/seed-blogs.mjs`,
+   which imports `../lib/blog-store.ts` directly.
+5. **Observed outcome.** Tests, seed script, and app build all run from the
+   same source with no duplicated storage logic; no `tsconfig-paths` or test
+   bundler dependency was needed.
+
+### Related source files
+- `tests/contact-api.test.mjs`, `tests/blog-api.test.mjs`, `tests/contact-store.test.mjs`
+- `lib/contact-api.ts` (explicit `.ts` imports), `tsconfig.json`
+- `scripts/seed-blogs.mjs`
+
+---
+
+## Example 6 — Lint error in the admin page's data-loading effect
+
+### Chronology
+
+1. **Initial implementation.** `components/blog-admin.tsx` loads the existing
+   posts on mount. The first version fetched the posts inside `useEffect` and
+   called the state setter synchronously with the parsed result.
+2. **Failure.** `npm run lint` failed with `react-hooks/set-state-in-effect`
+   on that setter — the React hooks rule flags synchronous `setState` during
+   the effect body because it forces an immediate extra render pass.
+3. **Corrective action.** The load logic was restructured so the state update
+   happens asynchronously: an async function performs the `fetch` and updates
+   state from its awaited result (same UI behavior, no synchronous update in
+   the effect body). No rule was disabled and no dependency was added.
+4. **How it was checked.** `npm run lint` clean; headless-browser run of
+   `/admin/blogs` confirmed the posts list still renders on load, publishing
+   still shows the success banner, and the list refresh includes the new
+   post.
+5. **Observed outcome.** Admin page behaves identically with lint passing;
+   rule stays enforced for future edits.
+
+### Related source files
+- `components/blog-admin.tsx` (data-loading effect)

@@ -36,6 +36,9 @@ yarn-error.log*
 # contact submissions (personal data, stored outside public/)
 /data/contacts.json
 
+# blog posts (runtime data)
+/data/blogs.json
+
 # vercel
 .vercel
 
