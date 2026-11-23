@@ -6,6 +6,7 @@ import type { ContactInput } from "./contact-validation";
 export type ContactEntry = ContactInput & {
   id: string;
   submittedAt: string;
+  updatedAt?: string;
 };
 
 function dataDir(): string {
@@ -57,8 +58,35 @@ async function readContacts(): Promise<ContactEntry[]> {
 
 let saveQueue: Promise<unknown> = Promise.resolve();
 
+function queued<T>(operation: () => Promise<T>): Promise<T> {
+  const run = saveQueue.then(operation);
+  saveQueue = run.catch(() => {});
+  return run;
+}
+
+async function writeContacts(contacts: ContactEntry[]): Promise<void> {
+  const dir = dataDir();
+  await fs.mkdir(dir, { recursive: true });
+  const tempFile = path.join(
+    dir,
+    `.contacts-${process.pid}-${crypto.randomUUID()}.tmp`,
+  );
+
+  try {
+    await fs.writeFile(
+      tempFile,
+      JSON.stringify(contacts, null, 2),
+      "utf8",
+    );
+    await fs.rename(tempFile, dataFile());
+  } catch (error) {
+    await fs.rm(tempFile, { force: true });
+    throw error;
+  }
+}
+
 export async function saveContact(input: ContactInput): Promise<boolean> {
-  const run = saveQueue.then(async () => {
+  const run = queued(async () => {
     const contacts = await readContacts();
 
     const entry: ContactEntry = {
@@ -67,27 +95,8 @@ export async function saveContact(input: ContactInput): Promise<boolean> {
       ...input,
     };
 
-    const dir = dataDir();
-    await fs.mkdir(dir, { recursive: true });
-    const tempFile = path.join(
-      dir,
-      `.contacts-${process.pid}-${crypto.randomUUID()}.tmp`,
-    );
-
-    try {
-      await fs.writeFile(
-        tempFile,
-        JSON.stringify([entry, ...contacts], null, 2),
-        "utf8",
-      );
-      await fs.rename(tempFile, dataFile());
-    } catch (error) {
-      await fs.rm(tempFile, { force: true });
-      throw error;
-    }
+    await writeContacts([entry, ...contacts]);
   });
-
-  saveQueue = run.catch(() => {});
 
   try {
     await run;
@@ -95,4 +104,47 @@ export async function saveContact(input: ContactInput): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function listContacts(): Promise<ContactEntry[]> {
+  const contacts = await readContacts();
+  return contacts.sort((a, b) => {
+    if (a.submittedAt === b.submittedAt) {
+      return a.id.localeCompare(b.id);
+    }
+    return b.submittedAt.localeCompare(a.submittedAt);
+  });
+}
+
+export async function updateContact(
+  id: string,
+  patch: Partial<ContactInput>,
+): Promise<ContactEntry | null> {
+  return queued(async () => {
+    const contacts = await readContacts();
+    const index = contacts.findIndex((contact) => contact.id === id);
+    if (index === -1) {
+      return null;
+    }
+    const updated: ContactEntry = {
+      ...contacts[index],
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    contacts[index] = updated;
+    await writeContacts(contacts);
+    return updated;
+  });
+}
+
+export async function deleteContact(id: string): Promise<boolean> {
+  return queued(async () => {
+    const contacts = await readContacts();
+    const remaining = contacts.filter((contact) => contact.id !== id);
+    if (remaining.length === contacts.length) {
+      return false;
+    }
+    await writeContacts(remaining);
+    return true;
+  });
 }

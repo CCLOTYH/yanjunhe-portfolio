@@ -45,6 +45,18 @@ export function SiteHeader() {
           >
             Contact (API)
           </Link>
+          <Link
+            href="/job-tracker"
+            className="font-semibold text-racing-red transition-colors hover:text-racing-orange"
+          >
+            Job Tracker
+          </Link>
+          <Link
+            href="/milestones"
+            className="font-semibold text-racing-red transition-colors hover:text-racing-orange"
+          >
+            Milestones
+          </Link>
         </nav>
       </div>
     </header>

@@ -13,9 +13,10 @@ export type Project = {
   focusAreas: string[];
   href: string;
   details: ProjectDetails;
+  updatedAt?: string;
 };
 
-export const projects: Project[] = [
+export const seedProjects: Project[] = [
   {
     slug: "c103-last-mile-delivery",
     number: "01",

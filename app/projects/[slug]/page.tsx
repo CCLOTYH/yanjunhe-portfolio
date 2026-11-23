@@ -2,19 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { RacingStripes } from "@/components/racing-stripes";
-import { projects } from "@/lib/projects";
+import { listProjects } from "@/lib/project-store";
 
 type Params = { params: Promise<{ slug: string }> };
 
-export function generateStaticParams() {
-  return projects.map((project) => ({ slug: project.slug }));
-}
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
 }: Params): Promise<Metadata> {
   const { slug } = await params;
-  const project = projects.find((p) => p.slug === slug);
+  const project = (await listProjects()).find((p) => p.slug === slug);
   if (!project) {
     return { title: "Project Not Found — Yanjun He" };
   }
@@ -28,7 +26,7 @@ export default async function ProjectPage({
   params,
 }: PageProps<"/projects/[slug]">) {
   const { slug } = await params;
-  const project = projects.find((p) => p.slug === slug);
+  const project = (await listProjects()).find((p) => p.slug === slug);
   if (!project) {
     notFound();
   }

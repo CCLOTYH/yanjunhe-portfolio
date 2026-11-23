@@ -16,6 +16,7 @@ type Post = {
   title: string;
   content: string;
   createdAt: string;
+  updatedAt?: string;
 };
 
 const initialForm = { title: "", content: "" };
@@ -36,6 +37,11 @@ export function BlogAdmin() {
   const [pending, setPending] = useState(false);
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState(initialForm);
+  const [editErrors, setEditErrors] = useState<FieldErrors>({});
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editNotice, setEditNotice] = useState<string | null>(null);
 
   const loadPosts = useCallback(async () => {
     try {
@@ -56,6 +62,95 @@ export function BlogAdmin() {
       await loadPosts();
     })();
   }, [loadPosts]);
+
+  function startEdit(post: Post) {
+    setEditingSlug(post.slug);
+    setEditForm({ title: post.title, content: post.content });
+    setEditErrors({});
+    setEditError(null);
+    setEditNotice(null);
+    setPublished(null);
+    setFormError(null);
+  }
+
+  function cancelEdit() {
+    setEditingSlug(null);
+    setEditForm(initialForm);
+    setEditErrors({});
+    setEditError(null);
+  }
+
+  async function handleUpdate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingSlug) {
+      return;
+    }
+    setPending(true);
+    setEditErrors({});
+    setEditError(null);
+    setEditNotice(null);
+
+    try {
+      const res = await fetch(
+        `/api/blogs?slug=${encodeURIComponent(editingSlug)}`,
+        {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(editForm),
+        },
+      );
+      const body = await res.json();
+
+      if (res.status === 200 && body.ok) {
+        setEditNotice(
+          `Post updated on the server. URL /${editingSlug} is unchanged.`,
+        );
+        setEditingSlug(null);
+        setEditForm(initialForm);
+        await loadPosts();
+      } else if (res.status === 422 && body.errors) {
+        setEditErrors(body.errors);
+      } else {
+        setEditError(body.error ?? "Something went wrong. Please try again.");
+      }
+    } catch {
+      setEditError(
+        "The update could not be saved. Please check your connection and try again.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function handleDelete(slug: string) {
+    setPending(true);
+    setEditError(null);
+    setEditNotice(null);
+    setFormError(null);
+
+    try {
+      const res = await fetch(`/api/blogs?slug=${encodeURIComponent(slug)}`, {
+        method: "DELETE",
+      });
+      const body = await res.json();
+
+      if (res.status === 200 && body.ok) {
+        setEditNotice(`Post /${slug} deleted from the server.`);
+        if (editingSlug === slug) {
+          cancelEdit();
+        }
+        await loadPosts();
+      } else {
+        setEditError(body.error ?? "Something went wrong. Please try again.");
+      }
+    } catch {
+      setEditError(
+        "The post could not be deleted. Please check your connection and try again.",
+      );
+    } finally {
+      setPending(false);
+    }
+  }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -183,7 +278,7 @@ export function BlogAdmin() {
             {[
               "Publishing posts with fetch() to /api/blogs.",
               "The server generates a unique slug from the title.",
-              "Empty titles or content are rejected.",
+              "Edit or delete any post below — the slug is its stable id.",
               "Posts are stored in data/blogs.json, outside the public site.",
             ].map((item) => (
               <li key={item} className="flex gap-3 leading-7 text-white/70">
@@ -197,6 +292,100 @@ export function BlogAdmin() {
           </ul>
         </aside>
       </div>
+
+      {editingSlug && (
+        <div className="rounded-2xl border border-navy/10 bg-white p-8 shadow-sm">
+          <div className="flex items-center gap-2">
+            <span
+              aria-hidden
+              className="block h-3 w-1.5 -skew-x-12 bg-racing-red"
+            />
+            <h2 className="text-sm font-bold uppercase tracking-widest text-charcoal">
+              Editing <span className="font-mono text-racing-red">/{editingSlug}</span>
+            </h2>
+          </div>
+          {editNotice && (
+            <div className="mt-6 rounded-2xl bg-navy p-6" role="status">
+              <p className="font-semibold text-white">Saved server-side</p>
+              <p className="mt-1 text-sm text-white/70">{editNotice}</p>
+            </div>
+          )}
+          {editError && (
+            <div
+              role="alert"
+              className="mt-6 rounded-2xl border-l-4 border-racing-red bg-racing-red/5 p-6"
+            >
+              <p className="text-sm font-medium text-charcoal">{editError}</p>
+            </div>
+          )}
+          <form onSubmit={handleUpdate} noValidate className="mt-6 flex flex-col gap-5">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="edit-title" className="text-sm font-semibold text-charcoal">
+                Title
+              </label>
+              <input
+                id="edit-title"
+                name="title"
+                type="text"
+                value={editForm.title}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, title: event.target.value }))
+                }
+                aria-invalid={editErrors.title ? true : undefined}
+                aria-describedby={editErrors.title ? "edit-title-error" : undefined}
+                className={inputClasses}
+              />
+              {editErrors.title && (
+                <p id="edit-title-error" className={errorClasses}>
+                  {editErrors.title}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="edit-content" className="text-sm font-semibold text-charcoal">
+                Content
+              </label>
+              <textarea
+                id="edit-content"
+                name="content"
+                rows={8}
+                value={editForm.content}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, content: event.target.value }))
+                }
+                aria-invalid={editErrors.content ? true : undefined}
+                aria-describedby={editErrors.content ? "edit-content-error" : undefined}
+                className={inputClasses}
+              />
+              {editErrors.content && (
+                <p id="edit-content-error" className={errorClasses}>
+                  {editErrors.content}
+                </p>
+              )}
+            </div>
+            <p className="text-sm text-zinc-500">
+              The slug stays the same, so existing links to /blogs/{editingSlug} keep working.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="submit"
+                disabled={pending}
+                className="inline-flex h-11 w-fit items-center justify-center rounded-full bg-racing-orange px-6 text-sm font-semibold text-charcoal transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-racing-orange"
+              >
+                {pending ? "Saving" : "Save changes"}
+              </button>
+              <button
+                type="button"
+                onClick={cancelEdit}
+                disabled={pending}
+                className="inline-flex h-11 items-center justify-center rounded-full border border-navy/20 px-5 text-sm font-semibold text-charcoal transition-colors hover:border-racing-orange disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       <div className="mt-6 rounded-2xl border border-navy/10 bg-white p-8">
         <div className="flex items-center justify-between gap-4">
@@ -217,6 +406,11 @@ export function BlogAdmin() {
             Refresh
           </button>
         </div>
+        {editNotice && !editingSlug && (
+          <div className="mt-6 rounded-2xl bg-navy p-6" role="status">
+            <p className="text-sm font-medium text-white">{editNotice}</p>
+          </div>
+        )}
         <div className="mt-6">
           {listError ? (
             <p className="text-sm font-medium text-zinc-600">{listError}</p>
@@ -234,11 +428,34 @@ export function BlogAdmin() {
                     <h3 className="font-semibold text-charcoal">{post.title}</h3>
                     <p className="text-xs text-zinc-500">
                       {formatDate(post.createdAt)}
+                      {post.updatedAt
+                        ? ` · edited ${formatDate(post.updatedAt)}`
+                        : ""}
                     </p>
                   </div>
-                  <p className="mt-0.5 font-mono text-xs text-racing-red">
-                    /{post.slug}
-                  </p>
+                  <div className="mt-0.5 flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-mono text-xs text-racing-red">
+                      /{post.slug}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => startEdit(post)}
+                        disabled={pending}
+                        className="rounded-full border border-navy/20 px-3 py-1 text-xs font-semibold text-charcoal transition-colors hover:border-racing-orange disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(post.slug)}
+                        disabled={pending}
+                        className="rounded-full px-3 py-1 text-xs font-semibold text-white/80 bg-racing-red transition-colors hover:bg-navy disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
                   <p className="mt-2 leading-7 text-zinc-700">{post.content}</p>
                 </li>
               ))}

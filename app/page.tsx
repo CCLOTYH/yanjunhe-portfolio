@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { RacingStripes } from "@/components/racing-stripes";
-import { projects } from "@/lib/projects";
+import { listProjects } from "@/lib/project-store";
 
 const toolbox = [
   "SQL",
@@ -12,7 +12,11 @@ const toolbox = [
   "Data Visualization",
 ];
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const projects = await listProjects();
+
   return (
     <>
       <section className="relative overflow-hidden bg-navy">

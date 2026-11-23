@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { RacingStripes } from "@/components/racing-stripes";
-import { projects } from "@/lib/projects";
+import { listProjects } from "@/lib/project-store";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Projects — Yanjun He",
@@ -14,7 +16,9 @@ const numberColorBySlug: Record<string, string> = {
   "cc-lot-website": "text-racing-red",
 };
 
-export default function Projects() {
+export default async function Projects() {
+  const projects = await listProjects();
+
   return (
     <>
       <section className="relative overflow-hidden bg-navy">

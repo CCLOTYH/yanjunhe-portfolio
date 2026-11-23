@@ -266,3 +266,70 @@ rather than invented.
 
 ### Related source files
 - `components/blog-admin.tsx` (data-loading effect)
+
+---
+
+# Midterm examples
+
+## Example 7 — Write-queue double invocation silently polluted the real JSON stores
+
+### Chronology
+
+1. **Initial implementation.** The midterm features (milestones, then projects)
+   introduced file stores whose mutations are serialized through a shared
+   promise queue. The queue helper was defined as
+   `function queued<T>(operation: () => Promise<T>): Promise<T>` and each
+   mutation ended with `return queued(async () => { … })();` — an accidental
+   second invocation copied from IIFE muscle memory.
+2. **Failure.** `queued(fn)` returns a `Promise`; calling that result with `()`
+   threw `TypeError: queued(...) is not a function` synchronously, so every
+   mutation returned HTTP 500. The tests caught it immediately
+   (`500 !== 201`). The dangerous part: `queued(fn)` had **already registered
+   the write operation on the promise chain**, so the storage write still
+   executed later as an orphaned microtask even though the API reported
+   failure. The server returned 500 while the file was modified in the
+   background — response and storage state disagreed.
+3. **How it surfaced.** While smoke-testing the milestones feature, `GET
+   /api/milestones` returned 14 stale milestones that no live request had
+   created (titles matching unit-test data: "Persisted", "Also persisted",
+   "Finish the dashboard"). During the later projects feature, the same
+   pattern had replaced the canonical `data/projects.json` content with test
+   residue ("sales-dashboard-2" … "sales-dashboard-10") and the real
+   `c103-last-mile-delivery` record was temporarily missing. The pollution
+   happened during *failed* test runs: an orphaned write could interleave with
+   the test runner's `afterEach` (which deletes the `*_DATA_DIR` env override
+   and removes the temp directory), so a late microtask re-read the data
+   directory — now resolving `process.cwd()/data` — and wrote test records
+   into the **real** store files. The same mechanism polluted
+   `data/blogs.json` during blog-CRUD debugging.
+4. **Corrective action.** All double invocations were removed
+   (`return queued(async () => { … });` — single call) across
+   `lib/milestone-store.ts`, `lib/contact-store.ts`, `lib/blog-store.ts`, and
+   `lib/project-store.ts`. With the fix, a failed operation can no longer
+   leave writes in flight: the queue only runs operations whose promise was
+   properly awaited, so responses and file state always agree.
+5. **Recovery.** The polluted runtime files were regenerated: projects were
+   reseeded from the canonical content in `lib/projects.ts` (the exact
+   pre-pollution content, kept in Git), and `data/blogs.json` was rebuilt via
+   `npm run seed:blogs`. `data/contacts.json` (real submissions) was verified
+   byte-identical before and after every run — the contact tests never write
+   to the real file because `saveContact` never had the double invocation.
+6. **How it was checked (regression proof).**
+   `md5 -q data/projects.json` recorded before and after a full `npm test`
+   run: **identical hash**, so the suite provably cannot touch the real store.
+   New concurrency tests were added (5 parallel creates with unique slugs for
+   projects and milestones; a mixed concurrent PATCH/POST/PATCH batch for
+   projects asserting every record survives), on top of the existing
+   contact/blog concurrency tests. A live end-to-end pass then confirmed:
+   create → 201, PATCH edit visible on all server-rendered pages, edit and
+   delete surviving a full server restart, delete → dynamic URL 404, and
+   invalid payloads rejected (400/404/422) with the file untouched.
+7. **Observed outcome.** `npm test` 104/104, lint clean, TypeScript clean,
+   production build passes; `data/projects.json` retains exactly the two
+   canonical projects through test runs and live CRUD traffic.
+
+### Related source files
+- `lib/project-store.ts`, `lib/milestone-store.ts`, `lib/contact-store.ts`, `lib/blog-store.ts` (single-invocation queue)
+- `lib/api-logger.ts`, `app/api/*/route.ts` (identifiable `[api]` request logs)
+- `tests/project-api.test.mjs`, `tests/milestone-api.test.mjs` (concurrency tests)
+- `data/projects.json` (restored canonical content, committed)

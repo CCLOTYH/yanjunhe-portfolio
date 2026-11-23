@@ -6,6 +6,7 @@ export type BlogPost = {
   title: string;
   content: string;
   createdAt: string;
+  updatedAt?: string;
 };
 
 export type BlogPostInput = {
@@ -79,12 +80,39 @@ function slugify(title: string): string {
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
+function queued<T>(operation: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(operation);
+  writeQueue = run.catch(() => {});
+  return run;
+}
+
+async function writeBlogs(blogs: BlogPost[]): Promise<void> {
+  const dir = dataDir();
+  await fs.mkdir(dir, { recursive: true });
+  const tempFile = path.join(
+    dir,
+    `.blogs-${process.pid}-${crypto.randomUUID()}.tmp`,
+  );
+
+  try {
+    await fs.writeFile(
+      tempFile,
+      JSON.stringify(blogs, null, 2),
+      "utf8",
+    );
+    await fs.rename(tempFile, dataFile());
+  } catch (error) {
+    await fs.rm(tempFile, { force: true });
+    throw error;
+  }
+}
+
 export async function getBlogs(): Promise<BlogPost[]> {
   return readBlogs();
 }
 
 export async function createBlogPost(input: BlogPostInput): Promise<BlogPost> {
-  const run = writeQueue.then(async () => {
+  return queued(async () => {
     const blogs = await readBlogs();
 
     const takenSlugs = new Set(blogs.map((post) => post.slug));
@@ -101,29 +129,41 @@ export async function createBlogPost(input: BlogPostInput): Promise<BlogPost> {
       createdAt: new Date().toISOString(),
     };
 
-    const dir = dataDir();
-    await fs.mkdir(dir, { recursive: true });
-    const tempFile = path.join(
-      dir,
-      `.blogs-${process.pid}-${crypto.randomUUID()}.tmp`,
-    );
-
-    try {
-      await fs.writeFile(
-        tempFile,
-        JSON.stringify([post, ...blogs], null, 2),
-        "utf8",
-      );
-      await fs.rename(tempFile, dataFile());
-    } catch (error) {
-      await fs.rm(tempFile, { force: true });
-      throw error;
-    }
+    await writeBlogs([post, ...blogs]);
 
     return post;
   });
+}
 
-  writeQueue = run.catch(() => {});
+export async function updateBlogPost(
+  slug: string,
+  patch: Partial<BlogPostInput>,
+): Promise<BlogPost | null> {
+  return queued(async () => {
+    const blogs = await readBlogs();
+    const index = blogs.findIndex((post) => post.slug === slug);
+    if (index === -1) {
+      return null;
+    }
+    const updated: BlogPost = {
+      ...blogs[index],
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    blogs[index] = updated;
+    await writeBlogs(blogs);
+    return updated;
+  });
+}
 
-  return run;
+export async function deleteBlogPost(slug: string): Promise<boolean> {
+  return queued(async () => {
+    const blogs = await readBlogs();
+    const remaining = blogs.filter((post) => post.slug !== slug);
+    if (remaining.length === blogs.length) {
+      return false;
+    }
+    await writeBlogs(remaining);
+    return true;
+  });
 }
